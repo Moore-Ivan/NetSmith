@@ -39,6 +39,6 @@ jobs:
       - name: 上传 JAR 产物
         uses: actions/upload-artifact@v4
         with:
-          name: IPCalculator-jars
+          name: NetSmith-jars
           path: build/libs/*.jar
           if-no-files-found: warn

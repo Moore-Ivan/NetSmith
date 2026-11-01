@@ -53,4 +53,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = 'IPCalculator'
+rootProject.name = 'NetSmith'

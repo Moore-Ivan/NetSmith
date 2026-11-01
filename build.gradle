@@ -1,19 +1,19 @@
 plugins {
     id 'java'
     id 'application'
-    id 'com.gradleup.shadow' version '9.4.2'
+    id 'com.gradleup.shadow' version '9.6.1'
 }
 
-def cfgAppName = 'IPCalculator' // 内部标识、文件名前缀、主 Jar 名
-def cfgDisplayName = 'IP子网计算器' // 安装包显示的名称、开始菜单名称
-def cfgVersion = '1.6.1' // 统一版本号
-def cfgMainClass = 'com.ipcalculator.SubnetGUI' // 统一主类入口
+def cfgAppName = 'NetSmith' // 内部标识、文件名前缀、主 Jar 名
+def cfgDisplayName = '网匠' // 安装包显示的名称、开始菜单名称
+def cfgVersion = '1.6.2' // 统一版本号
+def cfgMainClass = 'com.netsmith.SubnetGUI' // 统一主类入口
 def cfgVendor = 'Ivan' // 发行商/公司名称
 def cfgMainJarName = "${cfgAppName}-${cfgVersion}.jar" // 动态计算主 Jar 名称
 
 // 将版本号注入到 Gradle 项目全局属性中 (影响默认打包命名)
 project.version = cfgVersion
-project.group = 'com.ipcalculator' // 建议加上 group，Maven 发布时需要
+project.group = 'com.netsmith' // 建议加上 group，Maven 发布时需要
 
 repositories {
     mavenCentral()
@@ -145,8 +145,9 @@ tasks.register('myJpackage', Exec) {
         '--app-version', "${project.version}",
         '--vendor', cfgVendor,
         '--copyright', "Copyright @ ${cfgVendor}",
+        '--install-dir', cfgAppName,
         '--description', "IPv4/IPv6 subnet calculator based on Java FlatLaf",
-        '--input', layout.buildDirectory.dir("install/IPCalculator/lib").get().asFile.absolutePath,
+        '--input', layout.buildDirectory.dir("install/${cfgAppName}/lib").get().asFile.absolutePath,
         '--main-jar', cfgMainJarName,
         '--main-class', cfgMainClass,
         '--dest', layout.buildDirectory.dir("jpackage").get().asFile.absolutePath,

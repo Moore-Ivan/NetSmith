@@ -82,7 +82,7 @@ jobs:
       - name: 上传 EXE 构建产物 (方便未发版时调试下载)
         uses: actions/upload-artifact@v4
         with:
-          name: IPCalculator-windows-exe
+          name: NetSmith-windows-exe
           path: build/jpackage/*.exe
           if-no-files-found: error
 

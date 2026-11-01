@@ -1,4 +1,4 @@
-# IP子网计算器 (IPCalculator)
+# 网匠 (NetSmith)
 
 > 基于 Java Swing 开发的桌面级网络计算工具，同时支持 IPv4 与 IPv6 双栈环境，面向网络工程师、系统管理员及运维人员设计，提供从基础地址解析到复杂网络规划的一站式计算能力。
 
@@ -97,12 +97,23 @@
 - **测试框架**：JUnit 4
 - **打包工具**：Jpackage（生成原生安装包）
 
+## 🔧 近期优化
+
+### 📊 内存与性能优化
+- **SubnetTablePanel 内存契约优化**：降低数据量阈值（PAGED_MODE_THRESHOLD: 50,000 → 5,000，MAX_MEMORY_DATA_SIZE: 100,000 → 20,000），消除分页模式下双重数据问题，明确区分"分页渲染"与"分页加载"概念
+- **内存监控优化**：将内存刷新间隔从 1 秒延长至 2 秒，改用标准 MemoryMXBean API 替代 Runtime.totalMemory()，减少系统调用开销
+- **主题检测优化**：Windows 系统主题检测频率从 10 秒降至 30 秒，减少注册表查询开销，同时保持功能可用性
+
+### 🎨 用户体验改进
+- **ACL 策略检查面板**：优化输出结果区域布局，调整规则区高度并添加首选高度封顶，解决 JTabbedPane 挤压共享输出区的问题
+- **布局响应性**：各面板组件优化权重分配，确保在不同屏幕尺寸下保持良好的布局平衡
+
 ## 📦 项目结构
 
 ```
-IPCalculator/
+NetSmith/
 ├── build.gradle                 # 构建脚本：依赖、版本号、Shadow Jar、jpackage 打包
-├── src/main/java/com/ipcalculator/
+├── src/main/java/com/NetSmith/
 │   ├── SubnetGUI.java           # 主窗口：标签页懒加载、主题管理、全局快捷键、状态栏
 │   ├── SubnetController.java    # 控制器：统一调度 Service 与 UI 回调
 │   ├── SubnetCalculator.java    # IPv4 核心算法（纯静态，无 UI 依赖）
@@ -137,7 +148,7 @@ gradle run
 
 # 方式二：构建后运行 jar
 gradle jar
-java -jar build/libs/IPCalculator-x.x.x.jar
+java -jar build/libs/NetSmith-x.x.x.jar
 ```
 
 ### 构建
@@ -148,7 +159,7 @@ gradle jar
 
 # 2. 构建 Fat Jar（包含所有依赖，可直接运行）
 gradle shadowJar
-# 产物：build/libs/IPCalculator-x.x.x-all.jar
+# 产物：build/libs/NetSmith-x.x.x-all.jar
 
 # 3. 生成本地安装包（Windows 生成 .exe，macOS 生成 .dmg）
 gradle myJpackage
@@ -183,7 +194,7 @@ gradle myJpackage
 | `update.autoCheck`      | `true` | 是否在启动时自动检查更新      |
 | `update.lastCheckEpoch` | `0`    | 上次检查的 Unix 时间戳（秒） |
 
-**仓库地址**：更新检查器硬编码指向 `Moore-Ivan/IPCalculator`，如需 fork 后自用，修改 [UpdateChecker.java](src/main/java/com/ipcalculator/UpdateChecker.java) 顶部的 `REPO_OWNER` / `REPO_NAME` 常量。
+**仓库地址**：更新检查器硬编码指向 `Moore-Ivan/NetSmith`，如需 fork 后自用，修改 [UpdateChecker.java](src/main/java/com/NetSmith/UpdateChecker.java) 顶部的 `REPO_OWNER` / `REPO_NAME` 常量。
 
 ## 🏗️ 架构概览
 
@@ -211,7 +222,7 @@ gradle myJpackage
 gradle test
 ```
 
-现有测试覆盖 VLSM 子网划分等核心算法，位于 [VlsmTest.java](src/test/java/com/ipcalculator/VlsmTest.java)。
+现有测试覆盖 VLSM 子网划分等核心算法，位于 [VlsmTest.java](src/test/java/com/NetSmith/VlsmTest.java)。
 
 ## 工作流说明
 
