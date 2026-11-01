@@ -832,40 +832,13 @@ public class SubnetTablePanel extends JPanel {
         public final String usableHosts;
         public final String subnetMask;
         public final String broadcastAddress;
-        public final Comparable<?> sortableNetwork;
-        public final Comparable<?> sortableBroadcast;
-        public final Comparable<?> sortableHosts;
-        
+
         public SubnetRow(String networkAddress, int prefix, String usableHosts, String subnetMask, String broadcastAddress) {
             this.networkAddress = networkAddress;
             this.prefix = prefix;
             this.usableHosts = usableHosts;
             this.subnetMask = subnetMask;
             this.broadcastAddress = broadcastAddress;
-            this.sortableNetwork = parseSortableAddress(networkAddress);
-            this.sortableBroadcast = parseSortableAddress(broadcastAddress);
-            this.sortableHosts = parseSortableHosts(usableHosts);
-        }
-        
-        private static Comparable<?> parseSortableAddress(String addr) {
-            if (addr == null) return "";
-            try {
-                if (addr.contains(":")) {
-                    return IPv6Calculator.parseIPv6(addr);
-                }
-                return SubnetCalculator.ipToLong(addr);
-            } catch (Exception e) {
-                return addr;
-            }
-        }
-        
-        private static Comparable<?> parseSortableHosts(String hosts) {
-            if (hosts == null || hosts.isEmpty()) return BigInteger.ZERO;
-            try {
-                return new BigInteger(hosts);
-            } catch (NumberFormatException e) {
-                return hosts;
-            }
         }
     }
     
@@ -915,15 +888,5 @@ public class SubnetTablePanel extends JPanel {
         public List<SubnetRow> getData() {
             return data;
         }
-    }
-    
-    private static int compareComparables(Comparable<?> a, Comparable<?> b) {
-        if (a == null && b == null) return 0;
-        if (a == null) return -1;
-        if (b == null) return 1;
-        if (a.getClass().equals(b.getClass())) {
-            return ((Comparable) a).compareTo(b);
-        }
-        return a.toString().compareTo(b.toString());
     }
 }
