@@ -40,7 +40,6 @@ public class ConfigStore {
     private static final Object lock = new Object();
     private static Map<String, String> settings = new HashMap<>();
     private static Map<String, List<String>> historyMap = new HashMap<>();
-    private static volatile boolean loadFailed = false;
 
     // "历史已全部清除"通知监听器（如 HistoryComboBox 用于刷新自身下拉列表）
     private static final CopyOnWriteArrayList<Runnable> historyClearListeners = new CopyOnWriteArrayList<>();
@@ -118,7 +117,6 @@ public class ConfigStore {
             // 捕获包含 JsonSyntaxException 等运行时异常：配置文件损坏时回退到默认配置，
             // 避免静态初始化失败导致应用启动即崩溃
             System.err.println("ConfigStore: 加载设置失败(已忽略, 使用默认配置): " + e.getMessage());
-            loadFailed = true;
         }
     }
 
@@ -132,7 +130,6 @@ public class ConfigStore {
             }
         } catch (IOException e) {
             System.err.println("ConfigStore: 加载旧格式设置失败: " + e.getMessage());
-            loadFailed = true;
         }
     }
 
@@ -164,7 +161,6 @@ public class ConfigStore {
             // 捕获包含 JsonSyntaxException 等运行时异常：历史文件损坏时回退到空历史，
             // 避免静态初始化失败导致应用启动即崩溃
             System.err.println("ConfigStore: 加载历史失败(已忽略, 使用空历史): " + e.getMessage());
-            loadFailed = true;
         }
     }
 
@@ -175,7 +171,6 @@ public class ConfigStore {
             historyMap.putAll(loaded);
         } catch (IOException | ClassNotFoundException e) {
             System.err.println("ConfigStore: 加载旧格式历史失败: " + e.getMessage());
-            loadFailed = true;
         }
     }
 

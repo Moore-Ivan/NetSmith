@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class CalculationWorker {
 
@@ -164,7 +165,7 @@ public class CalculationWorker {
         dialog.setContentPane(panel);
         dialog.pack();
 
-        final SwingWorker<T, ?>[] workerRef = new SwingWorker[1];
+        final AtomicReference<SwingWorker<T, ?>> workerRef = new AtomicReference<>();
         // 延迟显示定时器（数组形式供内部类引用），任务结束时统一停止
         final javax.swing.Timer[] showTimer = new javax.swing.Timer[1];
 
@@ -200,8 +201,9 @@ public class CalculationWorker {
         };
 
         cancelBtn.addActionListener(e -> {
-            if (workerRef[0] != null) {
-                workerRef[0].cancel(true);
+            SwingWorker<T, ?> runningWorker = workerRef.get();
+            if (runningWorker != null) {
+                runningWorker.cancel(true);
             }
             finishProgress(showTimer[0], dialog, actionSource);
         });
@@ -273,7 +275,7 @@ public class CalculationWorker {
         if (callback != null) {
             callback.onStart();
         }
-        workerRef[0] = worker;
+        workerRef.set(worker);
         activeWorkers.add(worker);
         // 任务期间禁用触发按钮，防止用户重复点击发起重复任务；结束后由 finishProgress 恢复
         if (actionSource != null) {

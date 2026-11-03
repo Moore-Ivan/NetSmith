@@ -1,6 +1,6 @@
 # 网匠 (NetSmith)
 
-> 基于 Java FlatLaf 开发的桌面级网络计算工具，同时支持 IPv4 与 IPv6 双栈环境。
+> 基于 Java FlatLaf 开发的桌面级网络工具，同时支持 IPv4 与 IPv6 双栈环境。
 
 ## ✨ 功能特性
 
