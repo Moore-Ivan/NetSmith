@@ -15,6 +15,7 @@ custom-jre/
 .vscode/
 *.swp
 *.swo
+.screenshots/
 *~
 
 # ===== Eclipse =====
