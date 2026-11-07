@@ -6,7 +6,7 @@ plugins {
 
 def cfgAppName = 'NetSmith' // 内部标识、文件名前缀、主 Jar 名
 def cfgDisplayName = '网匠' // 安装包显示的名称、开始菜单名称
-def cfgVersion = '1.6.2' // 统一版本号
+def cfgVersion = '1.6.3' // 统一版本号
 def cfgMainClass = 'com.netsmith.SubnetGUI' // 统一主类入口
 def cfgVendor = 'Ivan' // 发行商/公司名称
 def cfgMainJarName = "${cfgAppName}-${cfgVersion}.jar" // 动态计算主 Jar 名称
