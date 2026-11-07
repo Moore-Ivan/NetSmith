@@ -10,8 +10,6 @@ import java.awt.event.KeyEvent;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
-import com.formdev.flatlaf.FlatLightLaf;
-import com.formdev.flatlaf.FlatDarkLaf;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -25,8 +23,11 @@ public class SubnetGUI extends JFrame implements ResultView {
     private CardLayout cardLayout;
     private JPanel outputPanel;
     private JTabbedPane tabbedPane;
+    private JSplitPane splitPane;
     private JLabel statusLabel;
+    private JLabel statusDot;
     private JLabel memoryLabel;
+    private JProgressBar memoryBar;
     private javax.swing.Timer memoryTimer;
     /** 内存显示刷新间隔：内存展示无实时性要求，2s 间隔足以感知趋势并降低定时开销 */
     private static final int MEMORY_REFRESH_INTERVAL_MS = 2000;
@@ -34,6 +35,10 @@ public class SubnetGUI extends JFrame implements ResultView {
     private final java.lang.management.MemoryMXBean memoryMXBean =
             java.lang.management.ManagementFactory.getMemoryMXBean();
     private boolean isFullscreen = false;
+    /** 从 ICO 解析出的全部图标帧，用于窗口图标与头部品牌标识 */
+    private final List<Image> appIcons = new ArrayList<>();
+    /** 状态栏当前是否处于错误态，供主题切换后恢复正确颜色 */
+    private boolean statusIsError = false;
     // 当前主题模式: "system"(跟随系统) / "light" / "dark"，volatile 供后台检测线程读取
     private volatile String themeMode = "system";
     private JButton themeBtn;
@@ -48,11 +53,13 @@ public class SubnetGUI extends JFrame implements ResultView {
     public SubnetGUI() {
         // 先从配置读取主题模式并应用（main 中已设置过一次，此处确保字段与配置同步）
         loadTheme();
-        setTitle("网匠 " + VersionInfo.getDisplayVersion() + " (IPv4 + IPv6)");
+        setTitle("网匠 " + VersionInfo.getDisplayVersion() + " · IPv4 / IPv6 ");
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         loadAppIcon();
-        setSize(800, 580);
-        setMinimumSize(new Dimension(800, 500));
+        // 默认窗口按屏幕可用区域自适应，避免小屏上超出可视范围
+        Rectangle usable = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        setSize(Math.min(1120, usable.width - 60), Math.min(780, usable.height - 60));
+        setMinimumSize(new Dimension(940, 700));
         setLocationRelativeTo(null);
 
         // 启动系统深浅色变化检测（跟随系统模式下自动切换主题）
@@ -61,6 +68,14 @@ public class SubnetGUI extends JFrame implements ResultView {
         graphicsDevice = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
         
         addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowOpened(java.awt.event.WindowEvent e) {
+                // 窗口可见后再设置分割比例：此时组件已有真实高度，避免初始位置塌到 0
+                if (splitPane != null) {
+                    splitPane.setDividerLocation(0.5);
+                }
+            }
+
             @Override
             public void windowClosing(java.awt.event.WindowEvent e) {
                 isClosing = true;
@@ -73,6 +88,12 @@ public class SubnetGUI extends JFrame implements ResultView {
         // 避免启动时一次性构建 19+ 业务面板（及其历史记录下拉加载）造成的窗口延迟
         tabbedPane = new JTabbedPane();
         tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+        // 顶层分组用稍高的卡片式标签，弱化传统文件夹边框
+        tabbedPane.putClientProperty("JTabbedPane.tabHeight", 38);
+        tabbedPane.putClientProperty("JTabbedPane.showTabSeparators", false);
+        tabbedPane.putClientProperty("JTabbedPane.hasFullBorder", false);
+        tabbedPane.putClientProperty("JTabbedPane.showContentSeparator", false);
+        tabbedPane.setBorder(new EmptyBorder(0, 0, 0, 0));
         installLazyTabLoading(tabbedPane);
         addLazyTab(tabbedPane, "IPv4 基础", this::buildIpv4BasicTab);
         addLazyTab(tabbedPane, "IPv4 子网划分", this::buildIpv4SubnetTab);
@@ -83,7 +104,8 @@ public class SubnetGUI extends JFrame implements ResultView {
 
         // 输出区域
         resultTablePanel = new ResultTablePanel();
-        
+        resultTablePanel.setStatusCallback(this::setStatus);
+
         tablePanel = new SubnetTablePanel();
         tablePanel.setStatusCallback(this::setStatus);
 
@@ -92,66 +114,98 @@ public class SubnetGUI extends JFrame implements ResultView {
         outputPanel.add(resultTablePanel, "TEXT");
         outputPanel.add(tablePanel, "TABLE");
 
-        // 底部按钮栏 + 状态栏
-        JPanel bottomPanel = new JPanel(new BorderLayout());
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        JButton clearBtn = new JButton("清空结果");
-        clearBtn.setToolTipText("清空结果区域 (Ctrl+L)");
-        clearBtn.setMnemonic(KeyEvent.VK_L);
-        clearBtn.addActionListener(e -> {
-            resultTablePanel.clearData();
-            tablePanel.clearData();
-        });
+        // 结果卡片：标题 + 常用操作 + 输出内容
+        JPanel outputCard = buildOutputCard();
 
-        JButton copyBtn = new JButton("复制结果");
-        copyBtn.setToolTipText("复制结果到剪贴板 (Ctrl+C)");
-        copyBtn.setMnemonic(KeyEvent.VK_C);
-        copyBtn.addActionListener(e -> copyResults());
-        
-        JButton contactBtn = new JButton("联系作者");
-        contactBtn.setToolTipText("点击查看作者联系方式");
-        contactBtn.addActionListener(e -> {
-            boolean opened = ContactAuthor.showContactInfo();
-            if (opened) {
-                setStatus("已打开联系作者页面");
-            } else {
-                setStatus("无法打开联系作者页面", true);
-            }
-        });
+        // 上下可拖拽分割：输入区与结果区高度可按需调整
+        splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tabbedPane, outputCard);
+        splitPane.setBorder(new EmptyBorder(0, 0, 0, 0));
+        splitPane.setDividerSize(8);
+        splitPane.setResizeWeight(0.5);
+        splitPane.setContinuousLayout(true);
+        splitPane.setOneTouchExpandable(false);
+        tabbedPane.setMinimumSize(new Dimension(0, 190));
+        outputCard.setMinimumSize(new Dimension(0, 190));
 
-        JButton shortcutBtn = new JButton("快捷键说明");
-        shortcutBtn.setToolTipText("查看所有快捷键说明 (F1)");
-        shortcutBtn.addActionListener(e -> ShortcutHelp.showShortcuts(this));
+        // 主面板：品牌头部 + 内容区 + 状态栏
+        JPanel content = new JPanel(new BorderLayout());
+        content.setBorder(new EmptyBorder(8, 12, 8, 12));
+        content.add(splitPane, BorderLayout.CENTER);
 
-        JButton clearHistoryBtn = new JButton("清除历史");
-        clearHistoryBtn.setToolTipText("清除所有输入框历史记录");
-        clearHistoryBtn.addActionListener(e -> {
-            ConfigStore.clearAllInputHistory();
-            // 各 HistoryComboBox 通过历史清除监听器即时刷新下拉列表
-            setStatus("已清除所有输入历史");
-        });
+        JPanel mainPanel = new JPanel(new BorderLayout());
+        mainPanel.add(buildHeaderPanel(), BorderLayout.NORTH);
+        mainPanel.add(content, BorderLayout.CENTER);
+        mainPanel.add(buildStatusBar(), BorderLayout.SOUTH);
+        setContentPane(mainPanel);
 
-        JButton baseConvertBtn = new JButton("进制转换");
-        baseConvertBtn.setToolTipText("打开进制转换器 (F3)");
+        memoryTimer = new javax.swing.Timer(MEMORY_REFRESH_INTERVAL_MS, e -> updateMemoryUsage());
+        memoryTimer.start();
+
+        setupGlobalShortcuts();
+        updateThemeButtonText();
+        cardLayout.show(outputPanel, "TEXT");
+    }
+
+    // ========== 主窗口视觉结构 ==========
+
+    /** 品牌头部：应用标识 + 名称版本 + 全局工具入口 */
+    private JComponent buildHeaderPanel() {
+        JPanel header = new JPanel(new BorderLayout(16, 0));
+        header.setBorder(new EmptyBorder(10, 14, 10, 14));
+
+        JPanel brand = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
+        brand.setOpaque(false);
+        JLabel iconLabel = new JLabel(brandIcon());
+
+        JPanel titleBox = new JPanel();
+        titleBox.setLayout(new BoxLayout(titleBox, BoxLayout.Y_AXIS));
+        titleBox.setOpaque(false);
+        JLabel title = new JLabel("网匠 NetSmith");
+        title.setFont(ThemeManager.boldFont().deriveFont(18f));
+        title.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel subtitle = ThemeManager.mutedLabel(
+                "IPv4 / IPv6  · " + VersionInfo.getDisplayVersion());
+        subtitle.setFont(ThemeManager.smallFont());
+        subtitle.setAlignmentX(Component.LEFT_ALIGNMENT);
+        titleBox.add(title);
+        titleBox.add(Box.createVerticalStrut(2));
+        titleBox.add(subtitle);
+
+        brand.add(iconLabel);
+        brand.add(titleBox);
+        header.add(brand, BorderLayout.WEST);
+
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        actions.setOpaque(false);
+
+        JButton baseConvertBtn = ThemeManager.toolButton("进制转换", "打开进制转换器 (F3)");
         baseConvertBtn.addActionListener(e -> {
             setStatus("已打开进制转换器");
             NumberBaseConverter.showConverter(this);
         });
 
-        JButton maskConvertBtn = new JButton("掩码转换");
-        maskConvertBtn.setToolTipText("打开掩码转换器 (F4)");
+        JButton maskConvertBtn = ThemeManager.toolButton("掩码转换", "打开掩码转换器 (F4)");
         maskConvertBtn.addActionListener(e -> {
             setStatus("已打开掩码转换器");
             MaskConverter.showConverter(this);
         });
 
-        themeBtn = new JButton("切换到亮色");
-        themeBtn.setToolTipText("切换主题模式：跟随系统 → 亮色 → 暗色（F2）");
-        themeBtn.addActionListener(e -> toggleTheme());
+        JButton shortcutBtn = ThemeManager.toolButton("快捷键", "查看所有快捷键说明 (F1)");
+        shortcutBtn.addActionListener(e -> ShortcutHelp.showShortcuts(this));
 
-        JButton updateBtn = new JButton("检查更新");
-        updateBtn.setToolTipText("检查是否有新版本 (F9)");
-        updateBtn.setMnemonic(KeyEvent.VK_U);
+        JButton contactBtn = ThemeManager.toolButton("联系作者", "点击查看作者联系方式 (F10)");
+        contactBtn.addActionListener(e -> {
+            boolean opened = ContactAuthor.showContactInfo();
+            setStatus(opened ? "已打开联系作者页面" : "无法打开联系作者页面", !opened);
+        });
+
+        JButton clearHistoryBtn = ThemeManager.toolButton("清除历史", "清除所有输入框历史记录 (Ctrl+Shift+L)");
+        clearHistoryBtn.addActionListener(e -> {
+            ConfigStore.clearAllInputHistory();
+            setStatus("已清除所有输入历史");
+        });
+
+        JButton updateBtn = ThemeManager.toolButton("检查更新", "检查是否有新版本 (F9)");
         updateBtn.addActionListener(e -> {
             // 若更新下载已转入后台，点击"检查更新"恢复显示下载进度窗口
             if (UpdateChecker.restoreBackgroundDownload()) {
@@ -162,44 +216,121 @@ public class SubnetGUI extends JFrame implements ResultView {
             UpdateChecker.checkAsync(SubnetGUI.this, true, SubnetGUI.this::setStatus);
         });
 
-        buttonPanel.add(contactBtn);
-        buttonPanel.add(shortcutBtn);
-        buttonPanel.add(themeBtn);
-        buttonPanel.add(updateBtn);
-        buttonPanel.add(clearHistoryBtn);
-        buttonPanel.add(baseConvertBtn);
-        buttonPanel.add(maskConvertBtn);
-        buttonPanel.add(clearBtn);
-        buttonPanel.add(copyBtn);
+        themeBtn = ThemeManager.toolButton("切换到亮色", "切换主题模式：跟随系统 → 亮色 → 暗色（F2）");
+        themeBtn.addActionListener(e -> toggleTheme());
 
-        statusLabel = new JLabel(" 就绪");
-        statusLabel.setBorder(BorderFactory.createEtchedBorder());
-        
-        memoryLabel = new JLabel();
-        memoryLabel.setBorder(BorderFactory.createEtchedBorder());
+        actions.add(baseConvertBtn);
+        actions.add(maskConvertBtn);
+        actions.add(ThemeManager.verticalSeparator());
+        actions.add(shortcutBtn);
+        actions.add(contactBtn);
+        actions.add(ThemeManager.verticalSeparator());
+        actions.add(clearHistoryBtn);
+        actions.add(updateBtn);
+        actions.add(themeBtn);
+        header.add(actions, BorderLayout.EAST);
+
+        // 用 JSeparator 而非自绘边框，确保主题切换时线条颜色同步更新
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.add(header, BorderLayout.CENTER);
+        wrapper.add(new JSeparator(), BorderLayout.SOUTH);
+        return wrapper;
+    }
+
+    /** 结果卡片头部：标题、操作提示与复制/清空入口 */
+    private JPanel buildOutputCard() {
+        JPanel card = new JPanel(new BorderLayout());
+
+        JPanel header = new JPanel(new BorderLayout(8, 0));
+        header.setBorder(new EmptyBorder(0, 2, 8, 2));
+
+        JPanel titleBox = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        titleBox.setOpaque(false);
+        JLabel title = new JLabel("输出结果");
+        title.setFont(ThemeManager.boldFont().deriveFont(14f));
+        JLabel hint = ThemeManager.mutedLabel("双击单元格复制 · 右键更多操作");
+        hint.setFont(ThemeManager.smallFont());
+        titleBox.add(title);
+        titleBox.add(hint);
+
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        actions.setOpaque(false);
+        JButton copyBtn = ThemeManager.toolButton("复制结果", "复制当前结果到剪贴板 (Ctrl+C)");
+        copyBtn.addActionListener(e -> copyResults());
+        JButton clearBtn = ThemeManager.toolButton("清空结果", "清空结果区域 (Ctrl+L)");
+        clearBtn.addActionListener(e -> {
+            resultTablePanel.clearData();
+            tablePanel.clearData();
+        });
+        actions.add(copyBtn);
+        actions.add(clearBtn);
+
+        header.add(titleBox, BorderLayout.WEST);
+        header.add(actions, BorderLayout.EAST);
+        card.add(header, BorderLayout.NORTH);
+        card.add(outputPanel, BorderLayout.CENTER);
+        return card;
+    }
+
+    /** 底部状态栏：状态指示点 + 提示文字 + 内存占用 */
+    private JComponent buildStatusBar() {
+        JPanel bar = new JPanel(new BorderLayout(12, 0));
+        bar.setBorder(new EmptyBorder(6, 14, 6, 14));
+
+        JPanel statusBox = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        statusBox.setOpaque(false);
+        statusDot = new JLabel("●");
+        statusDot.setFont(statusDot.getFont().deriveFont(9f));
+        statusDot.setForeground(ThemeManager.accent());
+        statusLabel = new JLabel("就绪");
+        statusLabel.setFont(ThemeManager.uiFont());
+        statusBox.add(statusDot);
+        statusBox.add(statusLabel);
+
+        JPanel memoryBox = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        memoryBox.setOpaque(false);
+        memoryLabel = ThemeManager.mutedLabel("");
+        memoryLabel.setFont(ThemeManager.smallFont());
+        memoryBar = new JProgressBar(0, 1000);
+        memoryBar.setPreferredSize(new Dimension(92, 10));
+        memoryBar.setBorderPainted(false);
+        memoryBar.setToolTipText("JVM 堆内存实时占用");
+        memoryBox.add(memoryLabel);
+        memoryBox.add(memoryBar);
+
+        bar.add(statusBox, BorderLayout.WEST);
+        bar.add(memoryBox, BorderLayout.EAST);
+
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.add(new JSeparator(), BorderLayout.NORTH);
+        wrapper.add(bar, BorderLayout.CENTER);
         updateMemoryUsage();
-        
-        JPanel statusPanel = new JPanel(new BorderLayout(5, 0));
-        statusPanel.add(statusLabel, BorderLayout.CENTER);
-        statusPanel.add(memoryLabel, BorderLayout.EAST);
-        
-        bottomPanel.add(buttonPanel, BorderLayout.CENTER);
-        bottomPanel.add(statusPanel, BorderLayout.SOUTH);
-        
-        memoryTimer = new javax.swing.Timer(MEMORY_REFRESH_INTERVAL_MS, e -> updateMemoryUsage());
-        memoryTimer.start();
+        return wrapper;
+    }
 
-        // 主面板
-        JPanel mainPanel = new JPanel(new BorderLayout(10, 5));
-        mainPanel.setBorder(new EmptyBorder(10, 10, 5, 10));
-        mainPanel.add(tabbedPane, BorderLayout.NORTH);
-        mainPanel.add(outputPanel, BorderLayout.CENTER);
-        mainPanel.add(bottomPanel, BorderLayout.SOUTH);
-        setContentPane(mainPanel);
-
-        setupGlobalShortcuts();
-        updateThemeButtonText();
-        cardLayout.show(outputPanel, "TEXT");
+    /** 头部品牌图标：优先使用应用 ICO 的最大帧，缺失时回退为手绘徽标 */
+    private ImageIcon brandIcon() {
+        Image best = null;
+        for (Image img : appIcons) {
+            if (img.getWidth(null) > 0 && (best == null || img.getWidth(null) > best.getWidth(null))) {
+                best = img;
+            }
+        }
+        if (best != null) {
+            return new ImageIcon(best.getScaledInstance(30, 30, Image.SCALE_SMOOTH));
+        }
+        java.awt.image.BufferedImage fallback =
+                new java.awt.image.BufferedImage(30, 30, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = fallback.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setColor(ThemeManager.accent());
+        g.fillRoundRect(0, 0, 30, 30, 9, 9);
+        g.setColor(Color.WHITE);
+        g.setFont(ThemeManager.boldFont().deriveFont(Font.BOLD, 16f));
+        FontMetrics fm = g.getFontMetrics();
+        g.drawString("N", (30 - fm.stringWidth("N")) / 2, 21);
+        g.dispose();
+        return new ImageIcon(fallback);
     }
 
     // ========== 标签页懒加载 ==========
@@ -242,6 +373,13 @@ public class SubnetGUI extends JFrame implements ResultView {
         JTabbedPane inner = new JTabbedPane();
         // 滚动布局：窄窗口下标签自动收纳为滚动箭头，避免换行堆叠挤压输出区
         inner.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+        // 内层使用下划线标签，与外层卡片标签形成清晰的层级区分
+        inner.putClientProperty("JTabbedPane.tabType", "underlined");
+        inner.putClientProperty("JTabbedPane.tabHeight", 32);
+        inner.putClientProperty("JTabbedPane.showTabSeparators", false);
+        inner.putClientProperty("JTabbedPane.hasFullBorder", false);
+        inner.putClientProperty("JTabbedPane.showContentSeparator", false);
+        inner.setBorder(new EmptyBorder(4, 0, 0, 0));
         installLazyTabLoading(inner);
         return inner;
     }
@@ -453,6 +591,7 @@ public class SubnetGUI extends JFrame implements ResultView {
             }
             List<Image> icons = parseIco(is.readAllBytes());
             if (!icons.isEmpty()) {
+                appIcons.addAll(icons);
                 setIconImages(icons);
             } else {
                 System.err.println("图标文件中未解析出任何帧: /NetSmith.ico");
@@ -622,9 +761,10 @@ public class SubnetGUI extends JFrame implements ResultView {
             return;
         }
         try {
-            UIManager.setLookAndFeel(dark ? new FlatDarkLaf() : new FlatLightLaf());
+            ThemeManager.install(dark);
             SwingUtilities.updateComponentTreeUI(this);
             updateThemeButtonText();
+            refreshThemeColors();
             setStatus(dark ? "系统为深色模式，已自动切换到暗色主题" : "系统为浅色模式，已自动切换到亮色主题");
         } catch (Exception e) {
             System.err.println("跟随系统自动切换主题失败: " + e.getMessage());
@@ -723,17 +863,13 @@ public class SubnetGUI extends JFrame implements ResultView {
 
     /** 按主题模式安装对应 LookAndFeel：system 模式下根据系统深浅色自动选择 */
     private static void applyThemeForMode(String mode) {
-        try {
-            boolean dark;
-            switch (mode) {
-                case "dark" -> dark = true;
-                case "light" -> dark = false;
-                default -> dark = isSystemDark(); // system 或未知值：跟随系统
-            }
-            UIManager.setLookAndFeel(dark ? new FlatDarkLaf() : new FlatLightLaf());
-        } catch (Exception e) {
-            System.err.println("加载主题失败: " + e.getMessage());
+        boolean dark;
+        switch (mode) {
+            case "dark" -> dark = true;
+            case "light" -> dark = false;
+            default -> dark = isSystemDark(); // system 或未知值：跟随系统
         }
+        ThemeManager.install(dark);
     }
 
     private void toggleTheme() {
@@ -750,6 +886,7 @@ public class SubnetGUI extends JFrame implements ResultView {
             applyThemeForMode(newMode);
             SwingUtilities.updateComponentTreeUI(this);
             updateThemeButtonText();
+            refreshThemeColors();
             setStatus(switch (newMode) {
                 case "dark" -> "已切换到暗色主题";
                 case "light" -> "已切换到亮色主题";
@@ -763,7 +900,24 @@ public class SubnetGUI extends JFrame implements ResultView {
             applyThemeForMode(oldMode);
             SwingUtilities.updateComponentTreeUI(this);
             updateThemeButtonText();
+            refreshThemeColors();
         }
+    }
+
+    /** 主题切换后刷新自绘/自定义颜色的组件，避免沿用上一套主题的硬编码颜色 */
+    private void refreshThemeColors() {
+        if (memoryLabel != null) {
+            memoryLabel.setForeground(ThemeManager.muted());
+        }
+        if (statusDot != null) {
+            statusDot.setForeground(statusIsError ? ThemeManager.error() : ThemeManager.accent());
+        }
+        if (statusLabel != null) {
+            statusLabel.setForeground(statusIsError
+                    ? ThemeManager.error()
+                    : UIManager.getColor("Label.foreground"));
+        }
+        repaint();
     }
 
     private void updateThemeButtonText() {
@@ -824,13 +978,13 @@ public class SubnetGUI extends JFrame implements ResultView {
 
     private void setStatus(String msg, boolean isError) {
         if (isClosing || !isDisplayable()) return;
-        statusLabel.setText(" " + msg);
-        // 错误色跟随主题（FlatLaf 提供的语义错误色），暗色主题下自动调亮，避免硬编码红色对比度失衡
-        Color errorColor = UIManager.getColor("Component.error.focusedBorderColor");
-        if (errorColor == null) {
-            errorColor = new Color(220, 53, 69);
-        }
+        statusIsError = isError;
+        statusLabel.setText(msg);
+        Color errorColor = ThemeManager.error();
         statusLabel.setForeground(isError ? errorColor : UIManager.getColor("Label.foreground"));
+        if (statusDot != null) {
+            statusDot.setForeground(isError ? errorColor : ThemeManager.accent());
+        }
     }
     
     private void copyResults() {
@@ -873,7 +1027,17 @@ public class SubnetGUI extends JFrame implements ResultView {
         String usedStr = formatMemory(heap.getUsed());
         String maxStr = formatMemory(maxMemory);
 
-        memoryLabel.setText(" 内存: " + usedStr + " / " + maxStr);
+        if (memoryLabel != null) {
+            memoryLabel.setText("内存 " + usedStr + " / " + maxStr);
+            memoryLabel.setToolTipText("JVM 堆内存：已用 " + usedStr + "，上限 " + maxStr);
+        }
+        if (memoryBar != null) {
+            int ratio = maxMemory > 0
+                    ? (int) Math.min(1000, heap.getUsed() * 1000L / maxMemory)
+                    : 0;
+            memoryBar.setValue(ratio);
+            memoryBar.setToolTipText("JVM 堆内存：已用 " + usedStr + " / " + maxStr);
+        }
     }
     
     private String formatMemory(long bytes) {

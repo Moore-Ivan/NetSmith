@@ -25,30 +25,22 @@ public class IPv6PreviewPanel extends JPanel {
     private JPanel previewArea;
     private Border normalBorder;
     private Border errorBorder;
+    private boolean showingError = false;
     private JTextField boundTextField;
     private KeyAdapter boundKeyListener;
     private FocusAdapter boundFocusListener;
     private Timer debounceTimer;
     private static final int DEBOUNCE_DELAY = 150;
     /** 值列统一使用等宽字体：IPv6 地址分组对齐，避免长短不一造成的参差 */
-    private static final Font VALUE_FONT = new Font(Font.MONOSPACED, Font.PLAIN, 12);
+    private static final Font VALUE_FONT = ThemeManager.monoFont();
 
     public IPv6PreviewPanel() {
         setLayout(new BorderLayout());
 
         previewArea = new JPanel(new GridBagLayout());
-        previewArea.setBorder(BorderFactory.createTitledBorder("实时预览"));
         previewArea.setOpaque(true);
-
-        normalBorder = previewArea.getBorder();
-        errorBorder = BorderFactory.createTitledBorder(
-            BorderFactory.createLineBorder(new Color(220, 53, 69), 2),
-            "实时预览",
-            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
-            javax.swing.border.TitledBorder.DEFAULT_POSITION,
-            null,
-            new Color(220, 53, 69)
-        );
+        buildPreviewBorders();
+        previewArea.setBorder(normalBorder);
 
         networkLabel = createValueLabel();
         prefixLabel = createValueLabel();
@@ -78,9 +70,41 @@ public class IPv6PreviewPanel extends JPanel {
     }
 
     private JLabel createValueLabel() {
-        JLabel label = new JLabel("---");
+        // “地址类型”“任播类型”可能返回中文描述，等宽字体无中文字形，需按内容回退界面字体
+        JLabel label = new JLabel("---") {
+            @Override
+            public void setText(String text) {
+                super.setText(text);
+                setFont(ThemeManager.monoOrUiFont(text));
+            }
+        };
         label.setFont(VALUE_FONT);
         return label;
+    }
+    
+    /** 重建边框：TitledBorder 的字体与错误色依赖当前主题，切换主题后需要重新生成 */
+    private void buildPreviewBorders() {
+        normalBorder = BorderFactory.createTitledBorder("实时预览");
+        errorBorder = BorderFactory.createTitledBorder(
+            BorderFactory.createLineBorder(ThemeManager.error(), 1),
+            "实时预览",
+            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
+            javax.swing.border.TitledBorder.DEFAULT_POSITION,
+            ThemeManager.boldFont(),
+            ThemeManager.error()
+        );
+    }
+    
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        if (previewArea != null) {
+            buildPreviewBorders();
+            previewArea.setBorder(showingError ? errorBorder : normalBorder);
+            previewArea.setBackground(showingError
+                    ? ThemeManager.errorTint()
+                    : UIManager.getColor("Panel.background"));
+        }
     }
 
     /** 添加一行两对"标签: 值"：标签列右对齐、值列左对齐并占满各自列宽 */
@@ -187,8 +211,10 @@ public class IPv6PreviewPanel extends JPanel {
             addrTypeLabel.setText(addrType);
             anycastTypeLabel.setText(anycastType != null ? anycastType : "---");
 
+            showingError = false;
             previewArea.setBorder(normalBorder);
             previewArea.setBackground(UIManager.getColor("Panel.background"));
+            networkLabel.setForeground(UIManager.getColor("Label.foreground"));
         } catch (IllegalArgumentException e) {
             showError(e.getMessage());
         }
@@ -204,7 +230,12 @@ public class IPv6PreviewPanel extends JPanel {
     }
 
     private void showError(String message) {
-        networkLabel.setText("<html><span style='color:red;'>" + message + "</span></html>");
+        showingError = true;
+        Color error = ThemeManager.error();
+        networkLabel.setForeground(error);
+        networkLabel.setText("<html><span style='color:#"
+                + String.format("%06x", error.getRGB() & 0xFFFFFF) + ";'>"
+                + message + "</span></html>");
         prefixLabel.setText("---");
         maskLabel.setText("---");
         firstAddrLabel.setText("---");
@@ -213,8 +244,7 @@ public class IPv6PreviewPanel extends JPanel {
         addrTypeLabel.setText("---");
         anycastTypeLabel.setText("---");
         previewArea.setBorder(errorBorder);
-        previewArea.setBackground(UIManager.getColor("OptionPane.errorBackground")
-                != null ? UIManager.getColor("OptionPane.errorBackground") : new Color(255, 240, 240));
+        previewArea.setBackground(ThemeManager.errorTint());
     }
 
     public void refresh() {
@@ -225,6 +255,8 @@ public class IPv6PreviewPanel extends JPanel {
     }
 
     public void clearPreview() {
+        showingError = false;
+        networkLabel.setForeground(UIManager.getColor("Label.foreground"));
         networkLabel.setText("---");
         prefixLabel.setText("---");
         maskLabel.setText("---");

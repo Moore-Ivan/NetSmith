@@ -22,8 +22,13 @@ public class HistoryComboBox extends JComboBox<String> {
     public HistoryComboBox(String fieldName, int preferredWidth) {
         this.fieldName = fieldName;
         setEditable(true);
-        setMinimumSize(new java.awt.Dimension(preferredWidth, 26));
-        setPreferredSize(new java.awt.Dimension(preferredWidth, 26));
+        // 输入框高度与全局圆角匹配，避免与相邻按钮高度参差
+        setMinimumSize(new java.awt.Dimension(preferredWidth, 30));
+        setPreferredSize(new java.awt.Dimension(preferredWidth, 30));
+        setMaximumRowCount(10);
+        // 一键清空当前输入，减少反复全选删除的操作
+        JTextField editor = (JTextField) getEditor().getEditorComponent();
+        editor.putClientProperty("JTextField.showClearButton", true);
         loadHistory();
         savedValue = getText();
         registerListeners();

@@ -5,10 +5,13 @@ import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 public class ResultTablePanel extends JPanel {
 
@@ -16,6 +19,11 @@ public class ResultTablePanel extends JPanel {
     private JTable table;
     private JPopupMenu rightClickMenu;
     private JScrollPane scrollPane;
+    private JPanel cardPanel;
+    private CardLayout cardLayout;
+    private JPanel emptyState;
+    private Consumer<String> statusCallback;
+    private boolean viewportListenerRegistered = false;
     
     // 列宽记忆
     private int[] columnWidths = {150, 350}; // 默认3:7比例
@@ -35,18 +43,35 @@ public class ResultTablePanel extends JPanel {
     private void initComponents() {
         model = new ResultTableModel();
         table = new JTable(model);
-        table.setFont(new Font("Monospaced", Font.PLAIN, 12));
-        table.setRowHeight(24);
+        table.setFont(ThemeManager.monoFont());
+        table.setRowHeight(26);
         table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         table.getTableHeader().setReorderingAllowed(false);
+        table.setShowHorizontalLines(false);
+        table.setShowVerticalLines(false);
+        table.setIntercellSpacing(new Dimension(0, 1));
+        table.setFillsViewportHeight(true);
         
-        // 列对齐：第一列左对齐，第二列左对齐
-        DefaultTableCellRenderer leftRenderer = new DefaultTableCellRenderer();
-        leftRenderer.setHorizontalAlignment(SwingConstants.LEFT);
-        leftRenderer.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        // 列对齐：项目列用界面字体，值列保持等宽字体便于 IP/掩码对齐
+        table.getColumnModel().getColumn(0).setCellRenderer(
+                new TableFontRenderer(ThemeManager.uiFont(), SwingConstants.LEFT));
+        table.getColumnModel().getColumn(1).setCellRenderer(
+                new TableFontRenderer(ThemeManager.monoFont(), SwingConstants.LEFT, true));
         
-        table.getColumnModel().getColumn(0).setCellRenderer(leftRenderer);
-        table.getColumnModel().getColumn(1).setCellRenderer(leftRenderer);
+        // 表头与单元格左对齐，视觉上形成统一的起始基线
+        // 表头渲染器同样会被表格字体覆盖，需在 super 之后重新设置界面字体，否则中文表头缺字
+        DefaultTableCellRenderer headerRenderer = new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable table, Object value,
+                    boolean isSelected, boolean hasFocus, int row, int column) {
+                super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                setFont(ThemeManager.boldFont());
+                setBorder(new javax.swing.border.EmptyBorder(0, 10, 0, 8));
+                return this;
+            }
+        };
+        headerRenderer.setHorizontalAlignment(SwingConstants.LEFT);
+        table.getTableHeader().setDefaultRenderer(headerRenderer);
         
         // 双击复制单元格
         table.addMouseListener(new MouseAdapter() {
@@ -59,6 +84,7 @@ public class ResultTablePanel extends JPanel {
                         Object value = model.getValueAt(row, col);
                         if (value != null) {
                             copyToClipboard(value.toString());
+                            notifyStatus("已复制单元格内容");
                         }
                     }
                 }
@@ -76,12 +102,113 @@ public class ResultTablePanel extends JPanel {
             }
         });
         
+        installCopyShortcut();
+        
         this.scrollPane = new JScrollPane(table);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("输出结果"));
-        add(scrollPane, BorderLayout.CENTER);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
+        
+        // 空状态与表格共用同一张卡片，避免启动时出现大片空白表格
+        cardLayout = new CardLayout();
+        cardPanel = new JPanel(cardLayout);
+        emptyState = createEmptyState();
+        cardPanel.add(emptyState, "empty");
+        cardPanel.add(scrollPane, "table");
+        add(cardPanel, BorderLayout.CENTER);
+        
+        model.addTableModelListener(e -> updateEmptyState());
+        updateEmptyState();
         
         // 设置列宽：加载保存的列宽 + 列宽变化监听（必须在 scrollPane 创建之后）
         applyColumnSettings();
+    }
+    
+    /** 空状态提示：给出下一步操作与可用快捷方式 */
+    private JPanel createEmptyState() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false);
+        
+        JPanel box = new JPanel();
+        box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
+        box.setOpaque(false);
+        
+        JLabel title = new JLabel("暂无输出结果");
+        title.setFont(ThemeManager.boldFont().deriveFont(15f));
+        title.setAlignmentX(Component.CENTER_ALIGNMENT);
+        
+        JLabel hint = ThemeManager.mutedLabel("在左侧输入参数并点击计算，结果会显示在这里");
+        hint.setFont(ThemeManager.smallFont());
+        hint.setAlignmentX(Component.CENTER_ALIGNMENT);
+        
+        JLabel tip = ThemeManager.mutedLabel("双击单元格复制 · 右键更多操作");
+        tip.setFont(ThemeManager.smallFont());
+        tip.setAlignmentX(Component.CENTER_ALIGNMENT);
+        
+        box.add(title);
+        box.add(Box.createVerticalStrut(8));
+        box.add(hint);
+        box.add(Box.createVerticalStrut(4));
+        box.add(tip);
+        panel.add(box);
+        return panel;
+    }
+    
+    private void updateEmptyState() {
+        if (cardPanel == null || cardLayout == null) return;
+        boolean empty = model.getRowCount() == 0;
+        cardLayout.show(cardPanel, empty ? "empty" : "table");
+        if (!empty) {
+            // 卡片切换后需要完成一次布局，视口宽度才有效；再触发列宽自适应
+            cardPanel.revalidate();
+            cardPanel.repaint();
+            SwingUtilities.invokeLater(this::resizeValueColumn);
+        }
+    }
+    
+    /** 表格获得焦点时，Ctrl+C 优先复制选中行（无选中则复制全部） */
+    private void installCopyShortcut() {
+        KeyStroke copyKey = KeyStroke.getKeyStroke(KeyEvent.VK_C,
+                Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx());
+        table.getInputMap(JComponent.WHEN_FOCUSED).put(copyKey, "copySelectedRows");
+        table.getActionMap().put("copySelectedRows", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (table.getSelectedRowCount() == 0) {
+                    copyAllData();
+                } else {
+                    copySelectedRows();
+                }
+            }
+        });
+    }
+    
+    /** 复制选中行（含表头），供右键菜单与快捷键共用 */
+    private void copySelectedRows() {
+        int[] selectedRows = table.getSelectedRows();
+        if (selectedRows.length == 0) return;
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append(model.getColumnName(0)).append("\t")
+          .append(model.getColumnName(1)).append("\n");
+        for (int viewRow : selectedRows) {
+            int modelRow = table.convertRowIndexToModel(viewRow);
+            Object key = model.getValueAt(modelRow, 0);
+            Object value = model.getValueAt(modelRow, 1);
+            sb.append(key != null ? key.toString() : "").append("\t");
+            sb.append(value != null ? value.toString() : "").append("\n");
+        }
+        copyToClipboard(sb.toString().trim());
+        notifyStatus("已复制 " + selectedRows.length + " 行数据");
+    }
+    
+    private void notifyStatus(String message) {
+        if (statusCallback != null) {
+            statusCallback.accept(message);
+        }
+    }
+    
+    /** 设置状态栏回调，用于复制等操作的即时反馈 */
+    public void setStatusCallback(Consumer<String> callback) {
+        this.statusCallback = callback;
     }
     
     private void initRightClickMenu() {
@@ -89,20 +216,7 @@ public class ResultTablePanel extends JPanel {
         
         // 复制选中的行
         JMenuItem copyRowItem = new JMenuItem("复制选中的行");
-        copyRowItem.addActionListener(e -> {
-            int[] selectedRows = table.getSelectedRows();
-            if (selectedRows.length == 0) return;
-            
-            StringBuilder sb = new StringBuilder();
-            for (int viewRow : selectedRows) {
-                int modelRow = table.convertRowIndexToModel(viewRow);
-                Object key = model.getValueAt(modelRow, 0);
-                Object value = model.getValueAt(modelRow, 1);
-                sb.append(key != null ? key.toString() : "").append("\t");
-                sb.append(value != null ? value.toString() : "").append("\n");
-            }
-            copyToClipboard(sb.toString().trim());
-        });
+        copyRowItem.addActionListener(e -> copySelectedRows());
         rightClickMenu.add(copyRowItem);
         
         // 复制全部数据
@@ -110,8 +224,8 @@ public class ResultTablePanel extends JPanel {
         copyAllItem.addActionListener(e -> copyAllData());
         rightClickMenu.add(copyAllItem);
         
-        // 导出为 CSV
-        JMenuItem exportCsvItem = new JMenuItem("导出为 CSV");
+        // 复制为 CSV（写入剪贴板，而不是保存文件，避免按钮文案误导）
+        JMenuItem exportCsvItem = new JMenuItem("复制为 CSV");
         exportCsvItem.addActionListener(e -> exportAsCsv());
         rightClickMenu.add(exportCsvItem);
     }
@@ -163,6 +277,50 @@ public class ResultTablePanel extends JPanel {
                 }
             });
         }
+        // 空状态/表格卡片切换时视口从 0 宽变为实际宽度，此时也要重新分配列宽
+        if (!viewportListenerRegistered) {
+            viewportListenerRegistered = true;
+            scrollPane.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent e) {
+                    resizeValueColumn();
+                }
+            });
+        }
+    }
+
+    /** 单元格渲染器：DefaultTableCellRenderer 会把字体重置为表格字体，这里再次覆盖以保留列字体 */
+    private static class TableFontRenderer extends DefaultTableCellRenderer {
+        private final Font cellFont;
+        /** 值列可能包含中文（如“NAT 配置辅助”“254 个端口”），等宽字体无中文字形需回退界面字体 */
+        private final boolean cjkFallback;
+        private final javax.swing.border.Border padding =
+                new javax.swing.border.EmptyBorder(0, 10, 0, 8);
+        private final javax.swing.border.Border focusBorder =
+                UIManager.getBorder("Table.focusCellHighlightBorder");
+
+        TableFontRenderer(Font cellFont, int alignment) {
+            this(cellFont, alignment, false);
+        }
+
+        TableFontRenderer(Font cellFont, int alignment, boolean cjkFallback) {
+            this.cellFont = cellFont;
+            this.cjkFallback = cjkFallback;
+            setHorizontalAlignment(alignment);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value,
+                boolean isSelected, boolean hasFocus, int row, int column) {
+            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            setFont(cjkFallback && value != null
+                    ? ThemeManager.monoOrUiFont(value.toString())
+                    : cellFont);
+            setBorder(hasFocus && focusBorder != null
+                    ? new javax.swing.border.CompoundBorder(focusBorder, padding)
+                    : padding);
+            return this;
+        }
     }
     
     /**
@@ -181,7 +339,12 @@ public class ResultTablePanel extends JPanel {
         int valueWidth = viewportWidth - projectWidth;
         if (valueWidth < 60) valueWidth = 60; // 最小宽度
         
+        table.getColumnModel().getColumn(1).setPreferredWidth(valueWidth);
         table.getColumnModel().getColumn(1).setWidth(valueWidth);
+        // setWidth 不会让表格自身重新计算首选尺寸，需显式 revalidate，
+        // 否则表格仍按旧的列宽总和绘制，出现斑马纹只铺到一半的情况
+        table.revalidate();
+        table.repaint();
     }
 
     /**
@@ -271,6 +434,7 @@ public class ResultTablePanel extends JPanel {
         String data = getAllDataAsText();
         if (data.isEmpty()) return;
         copyToClipboard(data);
+        notifyStatus("已复制全部结果");
     }
     
     private void exportAsCsv() {
@@ -291,6 +455,7 @@ public class ResultTablePanel extends JPanel {
             sb.append("\n");
         }
         copyToClipboard(sb.toString().trim());
+        notifyStatus("已复制 CSV 格式数据到剪贴板");
     }
     
     private void copyToClipboard(String text) {

@@ -2,6 +2,9 @@ package com.netsmith;
 
 import javax.swing.*;
 import javax.swing.border.Border;
+import javax.swing.border.CompoundBorder;
+import javax.swing.border.EmptyBorder;
+import javax.swing.border.TitledBorder;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
@@ -15,6 +18,7 @@ public class CidrPreviewPanel extends JPanel {
     private JPanel previewArea;
     private Border normalBorder;
     private Border errorBorder;
+    private boolean showingError = false;
     private JTextField boundTextField;
     private KeyAdapter boundKeyListener;
     private java.awt.event.FocusAdapter boundFocusListener;
@@ -24,34 +28,21 @@ public class CidrPreviewPanel extends JPanel {
     public CidrPreviewPanel() {
         setLayout(new BorderLayout());
         
-        previewArea = new JPanel(new GridLayout(4, 2, 8, 4));
-        previewArea.setBorder(BorderFactory.createTitledBorder("实时预览"));
+        previewArea = new JPanel(new GridBagLayout());
         previewArea.setEnabled(false);
         previewArea.setOpaque(true);
+        buildPreviewBorders();
+        previewArea.setBorder(normalBorder);
         
-        normalBorder = previewArea.getBorder();
-        errorBorder = BorderFactory.createTitledBorder(
-            BorderFactory.createLineBorder(new Color(220, 53, 69), 2), 
-            "实时预览", 
-            javax.swing.border.TitledBorder.DEFAULT_JUSTIFICATION,
-            javax.swing.border.TitledBorder.DEFAULT_POSITION,
-            null,
-            new Color(220, 53, 69)
-        );
+        networkLabel = createValueLabel();
+        maskLabel = createValueLabel();
+        wildcardLabel = createValueLabel();
+        hostCountLabel = createValueLabel();
         
-        networkLabel = new JLabel("---");
-        maskLabel = new JLabel("---");
-        wildcardLabel = new JLabel("---");
-        hostCountLabel = new JLabel("---");
-        
-        previewArea.add(new JLabel("网络地址:"));
-        previewArea.add(networkLabel);
-        previewArea.add(new JLabel("子网掩码:"));
-        previewArea.add(maskLabel);
-        previewArea.add(new JLabel("反掩码:"));
-        previewArea.add(wildcardLabel);
-        previewArea.add(new JLabel("可用主机数:"));
-        previewArea.add(hostCountLabel);
+        addPreviewRow(0, "网络地址", networkLabel);
+        addPreviewRow(1, "子网掩码", maskLabel);
+        addPreviewRow(2, "反掩码", wildcardLabel);
+        addPreviewRow(3, "可用主机数", hostCountLabel);
         
         add(previewArea, BorderLayout.CENTER);
         
@@ -61,6 +52,75 @@ public class CidrPreviewPanel extends JPanel {
             }
         });
         debounceTimer.setRepeats(false);
+    }
+    
+    /** 紧凑的两列布局：标签紧邻取值，避免 GridLayout 把值推到面板中线 */
+    private void addPreviewRow(int row, String label, JLabel valueLabel) {
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridy = row;
+        gbc.anchor = GridBagConstraints.WEST;
+        
+        gbc.gridx = 0;
+        gbc.insets = new Insets(2, 0, 2, 14);
+        gbc.weightx = 0;
+        previewArea.add(createKeyLabel(label), gbc);
+        
+        gbc.gridx = 1;
+        gbc.insets = new Insets(2, 0, 2, 0);
+        gbc.weightx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        previewArea.add(valueLabel, gbc);
+    }
+    
+    private JLabel createKeyLabel(String text) {
+        JLabel label = new JLabel(text);
+        label.setFont(ThemeManager.uiFont().deriveFont(Font.PLAIN, 12f));
+        return label;
+    }
+    
+    private JLabel createValueLabel() {
+        JLabel label = new JLabel("---");
+        label.setFont(ThemeManager.monoBoldFont());
+        return label;
+    }
+    
+    /** 重建边框：TitledBorder 的字体与错误色依赖当前主题，切换主题后需要重新生成 */
+    private void buildPreviewBorders() {
+        normalBorder = new CompoundBorder(
+                BorderFactory.createTitledBorder(
+                        null,
+                        "实时预览",
+                        TitledBorder.DEFAULT_JUSTIFICATION,
+                        TitledBorder.DEFAULT_POSITION,
+                        ThemeManager.boldFont().deriveFont(Font.BOLD, 12f),
+                        UIManager.getColor("Label.foreground")),
+                new EmptyBorder(4, 10, 8, 10));
+        errorBorder = new CompoundBorder(
+                BorderFactory.createTitledBorder(
+                        BorderFactory.createLineBorder(ThemeManager.error(), 1),
+                        "实时预览",
+                        TitledBorder.DEFAULT_JUSTIFICATION,
+                        TitledBorder.DEFAULT_POSITION,
+                        ThemeManager.boldFont(),
+                        ThemeManager.error()),
+                new EmptyBorder(6, 10, 10, 10));
+    }
+    
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        if (previewArea != null) {
+            buildPreviewBorders();
+            previewArea.setBorder(showingError ? errorBorder : normalBorder);
+            previewArea.setBackground(showingError
+                    ? ThemeManager.errorTint()
+                    : UIManager.getColor("Panel.background"));
+        }
+        if (networkLabel != null) {
+            networkLabel.setForeground(showingError
+                    ? ThemeManager.error()
+                    : UIManager.getColor("Label.foreground"));
+        }
     }
     
     public void bindToTextField(JTextField textField) {
@@ -128,37 +188,27 @@ public class CidrPreviewPanel extends JPanel {
             wildcardLabel.setText(SubnetCalculator.longToIp(wildcard));
             hostCountLabel.setText(String.valueOf(hosts));
             
+            showingError = false;
             previewArea.setBorder(normalBorder);
             previewArea.setBackground(UIManager.getColor("Panel.background"));
+            networkLabel.setForeground(UIManager.getColor("Label.foreground"));
         } catch (IllegalArgumentException e) {
             showError(e.getMessage());
         }
     }
     
     private void showError(String message) {
-        networkLabel.setText("<html><span style='color:red;'>" + message + "</span></html>");
+        showingError = true;
+        Color error = ThemeManager.error();
+        networkLabel.setForeground(error);
+        networkLabel.setText("<html><span style='color:#"
+                + String.format("%06x", error.getRGB() & 0xFFFFFF) + ";'>"
+                + message + "</span></html>");
         maskLabel.setText("---");
         wildcardLabel.setText("---");
         hostCountLabel.setText("---");
         previewArea.setBorder(errorBorder);
-        previewArea.setBackground(getThemeErrorBackground());
-    }
-
-    /**
-     * 主题感知的错误背景：以 FlatLaf 语义错误色（Component.error.focusedBorderColor）
-     * 与面板背景按 1:3 混合派生，暗色主题下自动偏暗不再刺眼；
-     * 取不到主题色时回退浅红。
-     */
-    private static Color getThemeErrorBackground() {
-        Color error = UIManager.getColor("Component.error.focusedBorderColor");
-        Color base = UIManager.getColor("Panel.background");
-        if (error == null || base == null) {
-            return new Color(255, 240, 240);
-        }
-        return new Color(
-                (error.getRed() + base.getRed() * 3) / 4,
-                (error.getGreen() + base.getGreen() * 3) / 4,
-                (error.getBlue() + base.getBlue() * 3) / 4);
+        previewArea.setBackground(ThemeManager.errorTint());
     }
     
     public void refresh() {
@@ -169,6 +219,8 @@ public class CidrPreviewPanel extends JPanel {
     }
 
     public void clearPreview() {
+        showingError = false;
+        networkLabel.setForeground(UIManager.getColor("Label.foreground"));
         networkLabel.setText("---");
         maskLabel.setText("---");
         wildcardLabel.setText("---");

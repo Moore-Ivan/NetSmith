@@ -1,7 +1,6 @@
 package com.netsmith;
 
 import javax.swing.*;
-import javax.swing.border.Border;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -14,7 +13,8 @@ public class ErrorIndicator extends JLabel {
     private JComponent targetComponent;
     private String errorMessage;
     private boolean hasError = false;
-    private static final Map<JComponent, Border> originalBorders = Collections.synchronizedMap(new WeakHashMap<>());
+    /** 记录设置错误前的轮廓样式，清除错误时原样恢复 */
+    private static final Map<JComponent, Object> originalOutlines = Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<JComponent, Integer> errorCounts = Collections.synchronizedMap(new WeakHashMap<>());
     
     public ErrorIndicator() {
@@ -33,17 +33,27 @@ public class ErrorIndicator extends JLabel {
         });
     }
     
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        // 主题切换后错误图标颜色同步更新
+        setIcon(createErrorIcon());
+    }
+    
     private ImageIcon createErrorIcon() {
         int size = 16;
         java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB);
         Graphics2D g2d = img.createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         
-        g2d.setColor(new Color(220, 53, 69));
+        g2d.setColor(ThemeManager.error());
         g2d.fillOval(1, 1, size - 2, size - 2);
         
         g2d.setColor(Color.WHITE);
-        g2d.setFont(new Font("Arial", Font.BOLD, 12));
-        g2d.drawString("!", 5, 13);
+        g2d.setFont(ThemeManager.boldFont().deriveFont(Font.BOLD, 11f));
+        FontMetrics fm = g2d.getFontMetrics();
+        g2d.drawString("!", (size - fm.stringWidth("!")) / 2,
+                (size - fm.getHeight()) / 2 + fm.getAscent());
         
         g2d.dispose();
         return new ImageIcon(img);
@@ -58,15 +68,17 @@ public class ErrorIndicator extends JLabel {
         setVisible(true);
         
         if (target != null) {
-            synchronized (originalBorders) {
-                originalBorders.putIfAbsent(target, target.getBorder());
-            }
             synchronized (errorCounts) {
                 int count = errorCounts.getOrDefault(target, 0);
                 count++;
                 errorCounts.put(target, count);
                 if (count == 1) {
-                    target.setBorder(BorderFactory.createLineBorder(new Color(220, 53, 69), 2));
+                    // 用 FlatLaf 轮廓而非替换边框：保留输入框圆角，且不改变组件尺寸
+                    synchronized (originalOutlines) {
+                        originalOutlines.put(target, target.getClientProperty("JComponent.outline"));
+                    }
+                    target.putClientProperty("JComponent.outline", "error");
+                    target.repaint();
                 }
             }
         }
@@ -85,13 +97,12 @@ public class ErrorIndicator extends JLabel {
                 count--;
                 if (count <= 0) {
                     errorCounts.remove(targetComponent);
-                    Border orig;
-                    synchronized (originalBorders) {
-                        orig = originalBorders.remove(targetComponent);
+                    Object originalOutline;
+                    synchronized (originalOutlines) {
+                        originalOutline = originalOutlines.remove(targetComponent);
                     }
-                    if (orig != null) {
-                        targetComponent.setBorder(orig);
-                    }
+                    targetComponent.putClientProperty("JComponent.outline", originalOutline);
+                    targetComponent.repaint();
                 } else {
                     errorCounts.put(targetComponent, count);
                 }

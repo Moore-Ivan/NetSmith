@@ -2,18 +2,28 @@ package com.netsmith;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.*;
 
 public class ShortcutHelp {
 
     public static void showShortcuts(Component parent) {
-        JPanel panel = new JPanel(new BorderLayout(10, 10));
-        panel.setBorder(new EmptyBorder(15, 15, 15, 15));
+        JPanel panel = new JPanel(new BorderLayout(0, 12));
+        panel.setBorder(new EmptyBorder(18, 18, 16, 18));
 
+        JPanel headerBox = new JPanel();
+        headerBox.setLayout(new BoxLayout(headerBox, BoxLayout.Y_AXIS));
+        headerBox.setOpaque(false);
         JLabel titleLabel = new JLabel("快捷键说明");
-        titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, 16f));
-        titleLabel.setHorizontalAlignment(SwingConstants.CENTER);
-        panel.add(titleLabel, BorderLayout.NORTH);
+        titleLabel.setFont(ThemeManager.boldFont().deriveFont(18f));
+        titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel subtitleLabel = ThemeManager.mutedLabel("按以下组合键可更快完成常用操作");
+        subtitleLabel.setFont(ThemeManager.smallFont());
+        subtitleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        headerBox.add(titleLabel);
+        headerBox.add(Box.createVerticalStrut(3));
+        headerBox.add(subtitleLabel);
+        panel.add(headerBox, BorderLayout.NORTH);
 
         String[][] shortcuts = {
             {"F1", "打开快捷键说明"},
@@ -38,18 +48,28 @@ public class ShortcutHelp {
                 return false;
             }
         };
-        table.setRowHeight(28);
-        table.getColumnModel().getColumn(0).setPreferredWidth(120);
-        table.getColumnModel().getColumn(1).setPreferredWidth(250);
+        table.setRowHeight(30);
+        table.setShowHorizontalLines(false);
+        table.setShowVerticalLines(false);
+        table.setIntercellSpacing(new Dimension(0, 1));
+        table.setFillsViewportHeight(true);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+
+        DefaultTableCellRenderer keyRenderer = new DefaultTableCellRenderer();
+        keyRenderer.setHorizontalAlignment(SwingConstants.CENTER);
+        keyRenderer.setFont(ThemeManager.monoBoldFont());
+        table.getColumnModel().getColumn(0).setCellRenderer(keyRenderer);
+        table.getColumnModel().getColumn(0).setPreferredWidth(140);
+        table.getColumnModel().getColumn(1).setPreferredWidth(300);
         table.getTableHeader().setReorderingAllowed(false);
 
         JScrollPane scrollPane = new JScrollPane(table);
-        scrollPane.setPreferredSize(new Dimension(420, 260));
+        scrollPane.setPreferredSize(new Dimension(470, 300));
+        scrollPane.setBorder(BorderFactory.createLineBorder(ThemeManager.divider()));
         panel.add(scrollPane, BorderLayout.CENTER);
 
-        JLabel tipLabel = new JLabel("提示：更多功能持续更新中...");
-        tipLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-        tipLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        JLabel tipLabel = ThemeManager.mutedLabel("提示：结果表格支持 Ctrl+C 复制选中行，双击单元格可复制单个值");
+        tipLabel.setFont(ThemeManager.smallFont());
         panel.add(tipLabel, BorderLayout.SOUTH);
 
         JOptionPane.showMessageDialog(parent, panel, "快捷键说明", JOptionPane.INFORMATION_MESSAGE);
